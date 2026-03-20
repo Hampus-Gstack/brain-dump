@@ -70,34 +70,35 @@ async function handleSubmit() {
     const text = input.value.trim();
     if (!text) return;
 
-    // Disable button, show loading
-    btn.disabled = true;
-    btn.classList.add('loading');
+    // Immediately clear + show success (optimistic UI)
+    input.value = '';
+    autoResize();
+    showSuccess();
 
-    try {
-        if (navigator.onLine) {
-            await sendToBackend(text);
-        } else {
+    // Fire request in background — don't wait for it
+    const payload = JSON.stringify({
+        text: text,
+        timestamp: new Date().toISOString(),
+        source: 'pwa'
+    });
+
+    if (navigator.onLine) {
+        fetch(CONFIG.APPS_SCRIPT_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain' },
+            body: payload
+        }).catch(() => {
+            // If it fails, queue it for later
             saveToQueue(text);
-            showError('Offline — saved locally. Will sync when connected.');
-        }
-
-        // Clear input and show success
-        input.value = '';
-        autoResize();
-        showSuccess();
-
-    } catch (err) {
-        console.error('Submit error:', err);
-        // Save to queue as fallback
+            showError('Connection lost. Saved locally.');
+        });
+    } else {
         saveToQueue(text);
-        showError('Connection error. Saved locally.');
-    } finally {
-        btn.disabled = false;
-        btn.classList.remove('loading');
-        // Re-focus after a brief delay (after success overlay clears)
-        setTimeout(() => input.focus(), CONFIG.SUCCESS_DISPLAY_MS + 100);
     }
+
+    // Re-focus for rapid consecutive dumps
+    setTimeout(() => input.focus(), CONFIG.SUCCESS_DISPLAY_MS + 100);
 }
 
 // ---- Send to Google Apps Script ----
