@@ -10,6 +10,7 @@
 const CONFIG = {
     APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzgNP67HuLTb9aMteWXVXLYsAe8EN91x6CBkam2KAQYsU7bAKGFuc4aJ8szvQc_BpKB/exec',
     GOOGLE_SHEET_URL: 'https://docs.google.com/spreadsheets/d/17IPYUIseVK_qPIJxiYrcxosF7BOdRoHfx905wi8WFx4/edit',
+    DUMP_SECRET: '30b2ed0e-038c-4a67-ae04-3bfb97628838',
     SUCCESS_DISPLAY_MS: 1200,
     ERROR_DISPLAY_MS: 3000,
     OFFLINE_QUEUE_KEY: 'braindump_queue'
@@ -79,7 +80,8 @@ async function handleSubmit() {
     const payload = JSON.stringify({
         text: text,
         timestamp: new Date().toISOString(),
-        source: 'pwa'
+        source: 'pwa',
+        secret: CONFIG.DUMP_SECRET
     });
 
     if (navigator.onLine) {
@@ -112,7 +114,8 @@ async function sendToBackend(text) {
         body: JSON.stringify({
             text: text,
             timestamp: new Date().toISOString(),
-            source: 'pwa'
+            source: 'pwa',
+            secret: CONFIG.DUMP_SECRET
         })
     });
 
