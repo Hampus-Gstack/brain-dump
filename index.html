@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0a0a0a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Brain Dump">
+    <meta name="description" content="Zero-distraction brain dump capture">
+    <title>Brain Dump</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app" id="app">
+        <!-- Success overlay -->
+        <div class="success-overlay" id="successOverlay">
+            <div class="success-icon">
+                <svg viewBox="0 0 52 52" class="checkmark">
+                    <circle class="checkmark-circle" cx="26" cy="26" r="25" fill="none"/>
+                    <path class="checkmark-check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
+                </svg>
+            </div>
+            <p class="success-text">Captured</p>
+        </div>
+
+        <!-- Error overlay -->
+        <div class="error-overlay" id="errorOverlay">
+            <p class="error-text" id="errorText">Connection error. Saved locally.</p>
+        </div>
+
+        <!-- Main capture area -->
+        <div class="capture-container">
+            <textarea 
+                id="dumpInput" 
+                class="dump-input" 
+                placeholder="Dump it..."
+                autofocus
+                rows="1"
+            ></textarea>
+            <div class="actions">
+                <button id="dumpBtn" class="dump-btn" aria-label="Send">
+                    <svg class="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <a href="#" id="logLink" class="log-link">View Log ↗</a>
+            <span class="queue-badge" id="queueBadge" style="display:none">
+                <span class="queue-dot"></span>
+                <span id="queueCount">0</span> queued
+            </span>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

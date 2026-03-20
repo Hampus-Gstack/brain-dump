@@ -1,0 +1,320 @@
+/* ============================================
+   Brain Dump PWA — Zero Distraction Capture
+   ============================================ */
+
+:root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --border: #1e1e1e;
+    --border-focus: #333333;
+    --text: #e8e8e8;
+    --text-muted: #555555;
+    --accent: #6366f1;
+    --accent-glow: rgba(99, 102, 241, 0.15);
+    --success: #22c55e;
+    --error: #ef4444;
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --radius: 16px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ---- App Layout ---- */
+
+.app {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    padding: 24px;
+    position: relative;
+}
+
+/* ---- Capture Area ---- */
+
+.capture-container {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.dump-input {
+    width: 100%;
+    min-height: 120px;
+    max-height: 50vh;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 17px;
+    font-weight: 300;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    resize: none;
+    outline: none;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    overflow-y: auto;
+}
+
+.dump-input::placeholder {
+    color: var(--text-muted);
+    font-weight: 300;
+}
+
+.dump-input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.03);
+}
+
+/* ---- Actions ---- */
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.dump-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: none;
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.dump-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.dump-btn:active {
+    transform: scale(0.95);
+}
+
+.dump-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.dump-btn .send-icon {
+    width: 20px;
+    height: 20px;
+    transition: transform 0.2s ease;
+}
+
+.dump-btn:not(:disabled):hover .send-icon {
+    transform: translate(1px, -1px);
+}
+
+/* Loading spinner inside button */
+.dump-btn.loading .send-icon {
+    display: none;
+}
+
+.dump-btn.loading::after {
+    content: '';
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ---- Success Overlay ---- */
+
+.success-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 10, 10, 0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+}
+
+.success-overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.success-icon {
+    width: 64px;
+    height: 64px;
+}
+
+.checkmark {
+    width: 64px;
+    height: 64px;
+}
+
+.checkmark-circle {
+    stroke-dasharray: 166;
+    stroke-dashoffset: 166;
+    stroke-width: 2;
+    stroke-miterlimit: 10;
+    stroke: var(--success);
+}
+
+.checkmark-check {
+    stroke-dasharray: 48;
+    stroke-dashoffset: 48;
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke: var(--success);
+}
+
+.success-overlay.show .checkmark-circle {
+    animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+
+.success-overlay.show .checkmark-check {
+    animation: stroke 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.4s forwards;
+}
+
+@keyframes stroke {
+    100% { stroke-dashoffset: 0; }
+}
+
+.success-text {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--success);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+/* ---- Error Overlay ---- */
+
+.error-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 24px;
+    background: var(--error);
+    color: white;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    transform: translateY(-100%);
+    transition: transform 0.3s ease;
+    z-index: 200;
+}
+
+.error-overlay.show {
+    transform: translateY(0);
+}
+
+/* ---- Footer ---- */
+
+.footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.log-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    transition: color 0.2s ease;
+}
+
+.log-link:hover {
+    color: var(--text);
+}
+
+.queue-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.queue-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #f59e0b;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 480px) {
+    .app {
+        padding: 16px;
+    }
+
+    .dump-input {
+        font-size: 16px;
+        padding: 16px;
+        min-height: 100px;
+    }
+
+    .dump-btn {
+        width: 48px;
+        height: 48px;
+    }
+}
+
+/* Safe area for notched phones */
+@supports (padding: max(0px)) {
+    .app {
+        padding-top: max(24px, env(safe-area-inset-top));
+        padding-bottom: max(80px, calc(env(safe-area-inset-bottom) + 60px));
+    }
+}
