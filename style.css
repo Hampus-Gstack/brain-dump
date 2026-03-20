@@ -91,6 +91,75 @@ html, body {
 .actions {
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
+    align-items: center;
+}
+
+/* ---- Attachment ---- */
+
+.attach-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.attach-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.attach-btn:hover {
+    color: var(--text);
+    border-color: var(--border-focus);
+}
+
+.attachment-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    max-width: 100%;
+}
+
+.attachment-thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 6px;
+}
+
+.attachment-name {
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.remove-attachment {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px;
+    transition: color 0.2s;
+}
+
+.remove-attachment:hover {
+    color: var(--error);
 }
 
 .dump-btn {

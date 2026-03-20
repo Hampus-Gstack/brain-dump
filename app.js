@@ -19,12 +19,21 @@ const CONFIG = {
 // ---- DOM Elements ----
 const input = document.getElementById('dumpInput');
 const btn = document.getElementById('dumpBtn');
+const attachBtn = document.getElementById('attachBtn');
+const fileInput = document.getElementById('fileInput');
+const attachmentPreview = document.getElementById('attachmentPreview');
+const attachmentThumb = document.getElementById('attachmentThumb');
+const attachmentName = document.getElementById('attachmentName');
+const removeAttachment = document.getElementById('removeAttachment');
 const successOverlay = document.getElementById('successOverlay');
 const errorOverlay = document.getElementById('errorOverlay');
 const errorText = document.getElementById('errorText');
 const logLink = document.getElementById('logLink');
 const queueBadge = document.getElementById('queueBadge');
 const queueCount = document.getElementById('queueCount');
+
+// Current attachment state
+let currentAttachment = null;
 
 // ---- Initialize ----
 function init() {
@@ -48,6 +57,11 @@ function init() {
         }
     });
 
+    // Attachment handlers
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelect);
+    removeAttachment.addEventListener('click', clearAttachment);
+
     // Process offline queue when back online
     window.addEventListener('online', processQueue);
 
@@ -69,29 +83,40 @@ function autoResize() {
 // ---- Submit Handler ----
 async function handleSubmit() {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text && !currentAttachment) return;
+
+    // Capture attachment before clearing
+    const attachment = currentAttachment;
 
     // Immediately clear + show success (optimistic UI)
     input.value = '';
     autoResize();
+    clearAttachment();
     showSuccess();
 
-    // Fire request in background — don't wait for it
-    const payload = JSON.stringify({
-        text: text,
+    // Build payload
+    const payload = {
+        text: text || (attachment ? '📎 ' + attachment.name : ''),
         timestamp: new Date().toISOString(),
         source: 'pwa',
         secret: CONFIG.DUMP_SECRET
-    });
+    };
+
+    if (attachment) {
+        payload.attachment = {
+            name: attachment.name,
+            type: attachment.type,
+            data: attachment.data  // base64
+        };
+    }
 
     if (navigator.onLine) {
         fetch(CONFIG.APPS_SCRIPT_URL, {
             method: 'POST',
             mode: 'no-cors',
             headers: { 'Content-Type': 'text/plain' },
-            body: payload
+            body: JSON.stringify(payload)
         }).catch(() => {
-            // If it fails, queue it for later
             saveToQueue(text);
             showError('Connection lost. Saved locally.');
         });
@@ -101,6 +126,49 @@ async function handleSubmit() {
 
     // Re-focus for rapid consecutive dumps
     setTimeout(() => input.focus(), CONFIG.SUCCESS_DISPLAY_MS + 100);
+}
+
+// ---- File Attachment ----
+function handleFileSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Check size (max 8MB)
+    if (file.size > 8 * 1024 * 1024) {
+        showError('File too large. Max 8MB.');
+        fileInput.value = '';
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        const base64 = event.target.result.split(',')[1]; // strip data:...;base64, prefix
+        currentAttachment = {
+            name: file.name,
+            type: file.type,
+            data: base64
+        };
+
+        // Show preview
+        attachmentName.textContent = file.name;
+        if (file.type.startsWith('image/')) {
+            attachmentThumb.src = event.target.result;
+            attachmentThumb.style.display = 'block';
+        } else {
+            attachmentThumb.style.display = 'none';
+        }
+        attachmentPreview.style.display = 'flex';
+    };
+    reader.readAsDataURL(file);
+    fileInput.value = ''; // reset so same file can be re-selected
+}
+
+function clearAttachment() {
+    currentAttachment = null;
+    attachmentPreview.style.display = 'none';
+    attachmentThumb.src = '';
+    attachmentName.textContent = '';
+    fileInput.value = '';
 }
 
 // ---- Send to Google Apps Script ----
