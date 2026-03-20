@@ -252,19 +252,122 @@ function appendToSheet(timestamp, rawText, classification, source, attachmentUrl
 
   sheet.appendRow(row);
 
+  const lastRow = sheet.getLastRow();
+
+  // Add status checkbox (unchecked)
+  sheet.getRange(lastRow, 10).insertCheckboxes();
+
   // If there's a thumbnail, add IMAGE formula in the row
   if (attachmentThumbUrl) {
-    const lastRow = sheet.getLastRow();
-    // Use IMAGE formula for thumbnail display
     sheet.getRange(lastRow, 9).setFormula('=IMAGE("' + attachmentThumbUrl + '")');
-    // Set row height to show thumbnail
     sheet.setRowHeight(lastRow, 60);
-    // Add a note with the Drive link for easy access
     sheet.getRange(lastRow, 9).setNote('Open: ' + attachmentUrl);
   }
 }
 
-// ---- Test function (run manually in Apps Script editor) ----
+// ---- Daily AI Email Digest ----
+function sendDailyDigest() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Sheet1')
+    || SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+
+  // Collect unchecked items (column J = false or empty)
+  const pending = [];
+  for (let i = 1; i < data.length; i++) {
+    const status = data[i][9]; // column J
+    if (status !== true) {
+      pending.push({
+        text: data[i][1],  // Raw Text
+        category: data[i][2],
+        priority: data[i][3],
+        summary: data[i][6],
+        timestamp: data[i][0]
+      });
+    }
+  }
+
+  if (pending.length === 0) {
+    Logger.log('No pending items — skipping digest.');
+    return;
+  }
+
+  // Build digest with Gemini
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  const prompt = `Du är en personlig assistent. Sammanfatta dessa obearbetade brain dump-items till en kort, prioriterad morgonbriefing på svenska. Gruppera efter prioritet (brådskande först). Var koncis men handlingsinriktad.
+
+Items:
+${pending.map((p, i) => `${i+1}. [${p.priority}] [${p.category}] ${p.summary || p.text}`).join('\n')}
+
+Svara i ren text, inga markdown-headers. Max 300 ord.`;
+
+  let digestText = '';
+  try {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
+    const response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1024 }
+      }),
+      muteHttpExceptions: true
+    });
+    const result = JSON.parse(response.getContentText());
+    digestText = result.candidates[0].content.parts[0].text;
+  } catch (err) {
+    digestText = 'Kunde inte generera AI-sammanfattning. Fel: ' + err.toString();
+  }
+
+  // Count by priority
+  const highCount = pending.filter(p => p.priority === 'high').length;
+  const medCount = pending.filter(p => p.priority === 'medium').length;
+  const lowCount = pending.filter(p => p.priority === 'low').length;
+
+  // Build email
+  const subject = `🧠 Brain Dump: ${pending.length} obearbetade items (${highCount} brådskande)`;
+  const sheetUrl = SpreadsheetApp.getActiveSpreadsheet().getUrl();
+
+  const body = `God morgon! 🌅\n\n` +
+    `Du har ${pending.length} obearbetade items:\n` +
+    `🔴 ${highCount} hög prioritet | 🟡 ${medCount} medium | 🟢 ${lowCount} låg/ingen\n\n` +
+    `--- AI Briefing ---\n\n${digestText}\n\n` +
+    `--- Öppna Sheet ---\n${sheetUrl}\n\n` +
+    `Ha en produktiv dag! 💪`;
+
+  // Send email
+  const userEmail = Session.getActiveUser().getEmail();
+  MailApp.sendEmail({
+    to: userEmail,
+    subject: subject,
+    body: body
+  });
+
+  Logger.log('Digest sent to ' + userEmail + ' with ' + pending.length + ' items.');
+}
+
+// ---- Setup daily trigger (run ONCE) ----
+function setupDailyTrigger() {
+  // Remove existing triggers for this function
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getHandlerFunction() === 'sendDailyDigest') {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+
+  // Create new trigger at 07:00
+  ScriptApp.newTrigger('sendDailyDigest')
+    .timeBased()
+    .atHour(7)
+    .everyDays(1)
+    .inTimezone('Europe/Stockholm')
+    .create();
+
+  Logger.log('Daily digest trigger set for 07:00 CET.');
+}
+
+// ---- Test functions ----
 function testClassification() {
   const testTexts = [
     'Ring revisor om momsen imorgon',
@@ -279,4 +382,8 @@ function testClassification() {
     Logger.log('Result: ' + JSON.stringify(result));
     Logger.log('---');
   });
+}
+
+function testDigest() {
+  sendDailyDigest();
 }
