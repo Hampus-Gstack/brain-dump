@@ -16,6 +16,13 @@ const CONFIG = {
     OFFLINE_QUEUE_KEY: 'braindump_queue'
 };
 
+// ---- Auto-update: reload when a new service worker takes over ----
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        window.location.reload();
+    });
+}
+
 // ---- DOM Elements ----
 const input = document.getElementById('dumpInput');
 const btn = document.getElementById('dumpBtn');
