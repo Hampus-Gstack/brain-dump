@@ -8,7 +8,7 @@
 // ---- Configuration ----
 // Replace this with your deployed Google Apps Script web app URL
 const CONFIG = {
-    APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwtcKxFpOwHbBvlBNL377JKbYkL9c3PoASxCU8Z6jlMmPFQk1reYK1sY6L2gb8pdj-8/exec',
+    APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwK7h4r4C-w5pHSOpGYv-ozCzPNj5vkHyi-Ep6VE89FcRW9lVgvaRKL8rV7jY9yWDYW/exec',
     GOOGLE_SHEET_URL: 'https://docs.google.com/spreadsheets/d/17IPYUIseVK_qPIJxiYrcxosF7BOdRoHfx905wi8WFx4/edit',
     DUMP_SECRET: '30b2ed0e-038c-4a67-ae04-3bfb97628838',
     SUCCESS_DISPLAY_MS: 1200,
