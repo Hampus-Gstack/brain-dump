@@ -107,50 +107,73 @@ function initVoice() {
     }
 
     recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    
+    // iOS Safari doesn't support continuous mode well — detect and adapt
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    recognition.continuous = !isIOS; // disable continuous on iOS
     recognition.interimResults = true;
-    recognition.lang = 'sv-SE'; // Default Swedish, auto-detects others
+    recognition.lang = 'sv-SE';
 
-    let finalTranscript = '';
+    let accumulatedText = ''; // keep text across recognition restarts
     let silenceTimer = null;
 
     recognition.onresult = (event) => {
         let interim = '';
-        finalTranscript = '';
+        let sessionFinal = '';
         for (let i = 0; i < event.results.length; i++) {
             if (event.results[i].isFinal) {
-                finalTranscript += event.results[i][0].transcript + ' ';
+                sessionFinal += event.results[i][0].transcript + ' ';
             } else {
                 interim += event.results[i][0].transcript;
             }
         }
-        // Show live transcription
-        input.value = (finalTranscript + interim).trim();
+        
+        // Show live transcription (accumulated + current session)
+        const currentText = accumulatedText + sessionFinal + interim;
+        input.value = currentText.trim();
         autoResize();
+
+        // On final result, save to accumulated
+        if (sessionFinal) {
+            accumulatedText += sessionFinal;
+        }
 
         // Reset silence timer
         clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
-            // Auto-stop after 3s silence if we have text
             if (input.value.trim() && isListening) {
                 stopVoice();
             }
-        }, 3000);
+        }, 4000); // 4s silence before auto-stop
     };
 
     recognition.onerror = (event) => {
-        if (event.error !== 'aborted') {
+        if (event.error === 'not-allowed') {
+            // Mic permission denied
+            if (voiceBtn) voiceBtn.style.display = 'none';
+        }
+        if (event.error !== 'aborted' && event.error !== 'no-speech') {
             console.log('Voice error:', event.error);
         }
-        stopVoice();
+        // Only stop on real errors, not 'no-speech'
+        if (event.error !== 'no-speech') {
+            stopVoice();
+        }
     };
 
     recognition.onend = () => {
         if (isListening) {
-            // Restart if still listening (browser may stop)
-            try { recognition.start(); } catch(e) {}
+            // Restart if still listening (iOS stops after each result)
+            setTimeout(() => {
+                if (isListening) {
+                    try { recognition.start(); } catch(e) {}
+                }
+            }, 100);
         }
     };
+
+    // Reset accumulated text when starting fresh
+    recognition._resetAccumulated = () => { accumulatedText = ''; };
 }
 
 function toggleVoice() {
@@ -167,6 +190,7 @@ function startVoice() {
     voiceBtn.classList.add('listening');
     voicePulse.classList.add('active');
     input.placeholder = 'Lyssnar...';
+    if (recognition._resetAccumulated) recognition._resetAccumulated();
     try {
         recognition.start();
     } catch(e) {

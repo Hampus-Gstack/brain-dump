@@ -263,6 +263,25 @@ function appendToSheet(timestamp, rawText, classification, source, attachmentUrl
     sheet.setRowHeight(lastRow, 60);
     sheet.getRange(lastRow, 9).setNote('Open: ' + attachmentUrl);
   }
+
+  // Auto-route journal/thought entries to Journal sheet
+  var category = classification.category || 'note';
+  if (category === 'journal' || category === 'thought') {
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var journalSheet = ss.getSheetByName('Journal');
+      if (journalSheet) {
+        var dateStr = (timestamp || '').substring(0, 10);
+        var timeStr = (timestamp || '').substring(11, 16);
+        var emoji = category === 'thought' ? '💭' : '📓';
+        journalSheet.appendRow([emoji + ' ' + dateStr + ' ' + timeStr]);
+        journalSheet.appendRow([rawText]);
+        journalSheet.appendRow(['']); // spacer
+      }
+    } catch(e) {
+      Logger.log('Journal routing error: ' + e.message);
+    }
+  }
 }
 
 // ---- Daily AI Email Digest ----
@@ -356,15 +375,15 @@ function setupDailyTrigger() {
     }
   });
 
-  // Create new trigger at 07:00
+  // Create new trigger at 06:00
   ScriptApp.newTrigger('sendDailyDigest')
     .timeBased()
-    .atHour(7)
+    .atHour(6)
     .everyDays(1)
     .inTimezone('Europe/Stockholm')
     .create();
 
-  Logger.log('Daily digest trigger set for 07:00 CET.');
+  Logger.log('Daily digest trigger set for 06:00 CET.');
 }
 
 // ---- Test functions ----
