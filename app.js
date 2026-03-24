@@ -42,6 +42,12 @@ const queueCount = document.getElementById('queueCount');
 // Current attachment state
 let currentAttachment = null;
 
+// Voice recognition state
+let recognition = null;
+let isListening = false;
+const voiceBtn = document.getElementById('voiceBtn');
+const voicePulse = document.getElementById('voicePulse');
+
 // ---- Initialize ----
 function init() {
     // Set log link
@@ -69,6 +75,10 @@ function init() {
     fileInput.addEventListener('change', handleFileSelect);
     removeAttachment.addEventListener('click', clearAttachment);
 
+    // Voice input
+    initVoice();
+    if (voiceBtn) voiceBtn.addEventListener('click', toggleVoice);
+
     // Process offline queue when back online
     window.addEventListener('online', processQueue);
 
@@ -87,8 +97,99 @@ function autoResize() {
     input.style.height = Math.min(input.scrollHeight, window.innerHeight * 0.5) + 'px';
 }
 
+// ---- Voice Input (Web Speech API) ----
+function initVoice() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+        // Hide mic button if not supported
+        if (voiceBtn) voiceBtn.style.display = 'none';
+        return;
+    }
+
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'sv-SE'; // Default Swedish, auto-detects others
+
+    let finalTranscript = '';
+    let silenceTimer = null;
+
+    recognition.onresult = (event) => {
+        let interim = '';
+        finalTranscript = '';
+        for (let i = 0; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript + ' ';
+            } else {
+                interim += event.results[i][0].transcript;
+            }
+        }
+        // Show live transcription
+        input.value = (finalTranscript + interim).trim();
+        autoResize();
+
+        // Reset silence timer
+        clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+            // Auto-stop after 3s silence if we have text
+            if (input.value.trim() && isListening) {
+                stopVoice();
+            }
+        }, 3000);
+    };
+
+    recognition.onerror = (event) => {
+        if (event.error !== 'aborted') {
+            console.log('Voice error:', event.error);
+        }
+        stopVoice();
+    };
+
+    recognition.onend = () => {
+        if (isListening) {
+            // Restart if still listening (browser may stop)
+            try { recognition.start(); } catch(e) {}
+        }
+    };
+}
+
+function toggleVoice() {
+    if (isListening) {
+        stopVoice();
+    } else {
+        startVoice();
+    }
+}
+
+function startVoice() {
+    if (!recognition) return;
+    isListening = true;
+    voiceBtn.classList.add('listening');
+    voicePulse.classList.add('active');
+    input.placeholder = 'Lyssnar...';
+    try {
+        recognition.start();
+    } catch(e) {
+        // Already started
+    }
+}
+
+function stopVoice() {
+    if (!recognition) return;
+    isListening = false;
+    voiceBtn.classList.remove('listening');
+    voicePulse.classList.remove('active');
+    input.placeholder = 'Dump it...';
+    try {
+        recognition.stop();
+    } catch(e) {}
+}
+
 // ---- Submit Handler ----
 async function handleSubmit() {
+    // Stop voice if listening
+    if (isListening) stopVoice();
+
     const text = input.value.trim();
     if (!text && !currentAttachment) return;
 
@@ -149,14 +250,13 @@ function handleFileSelect(e) {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-        const base64 = event.target.result.split(',')[1]; // strip data:...;base64, prefix
+        const base64 = event.target.result.split(',')[1];
         currentAttachment = {
             name: file.name,
             type: file.type,
             data: base64
         };
 
-        // Show preview
         attachmentName.textContent = file.name;
         if (file.type.startsWith('image/')) {
             attachmentThumb.src = event.target.result;
@@ -167,7 +267,7 @@ function handleFileSelect(e) {
         attachmentPreview.style.display = 'flex';
     };
     reader.readAsDataURL(file);
-    fileInput.value = ''; // reset so same file can be re-selected
+    fileInput.value = '';
 }
 
 function clearAttachment() {
@@ -182,10 +282,8 @@ function clearAttachment() {
 async function sendToBackend(text) {
     const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
         method: 'POST',
-        mode: 'no-cors', // Apps Script requires no-cors from external origins
-        headers: {
-            'Content-Type': 'text/plain',
-        },
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({
             text: text,
             timestamp: new Date().toISOString(),
@@ -193,9 +291,6 @@ async function sendToBackend(text) {
             secret: CONFIG.DUMP_SECRET
         })
     });
-
-    // Note: no-cors means we can't read the response,
-    // but Apps Script will still process it
     return true;
 }
 
@@ -224,7 +319,6 @@ async function processQueue() {
     if (queue.length === 0) return;
 
     const remaining = [];
-
     for (const item of queue) {
         try {
             await sendToBackend(item.text);
