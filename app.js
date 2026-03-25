@@ -385,5 +385,103 @@ function showError(message) {
     }, CONFIG.ERROR_DISPLAY_MS);
 }
 
+// ---- AI Chat ----
+const chatPanel = document.getElementById('chatPanel');
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const chatSend = document.getElementById('chatSend');
+const chatToggle = document.getElementById('chatToggle');
+const chatClose = document.getElementById('chatClose');
+
+let chatOpen = false;
+
+function initChat() {
+    if (chatToggle) chatToggle.addEventListener('click', toggleChat);
+    if (chatClose) chatClose.addEventListener('click', toggleChat);
+    if (chatSend) chatSend.addEventListener('click', sendChat);
+    if (chatInput) chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') sendChat();
+    });
+}
+
+function toggleChat() {
+    chatOpen = !chatOpen;
+    chatPanel.classList.toggle('open', chatOpen);
+    if (chatOpen) {
+        chatInput.focus();
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+}
+
+function addChatBubble(text, type) {
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble ' + type;
+    bubble.textContent = text;
+    chatMessages.appendChild(bubble);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return bubble;
+}
+
+function addTypingIndicator() {
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble bot typing';
+    bubble.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    bubble.id = 'typingIndicator';
+    chatMessages.appendChild(bubble);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return bubble;
+}
+
+async function sendChat() {
+    const msg = chatInput.value.trim();
+    if (!msg) return;
+
+    addChatBubble(msg, 'user');
+    chatInput.value = '';
+    
+    const typing = addTypingIndicator();
+
+    try {
+        // Use fetch with no-cors (can't read response directly from Apps Script web app)
+        // Instead, use a JSONP-style GET request via doGet workaround
+        // But simpler: use fetch POST and accept opaque response, re-fetch via GET
+        const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({
+                action: 'chat',
+                message: msg,
+                secret: CONFIG.DUMP_SECRET
+            }),
+            redirect: 'follow'
+        });
+
+        let reply = '';
+        try {
+            const data = await response.json();
+            reply = data.reply || 'Inget svar mottaget.';
+        } catch {
+            // If CORS blocks reading, try text
+            try {
+                const text = await response.text();
+                const match = text.match(/"reply"\s*:\s*"([^"]+)"/);
+                reply = match ? match[1] : 'Svar mottaget men kunde inte läsas (CORS). Prova igen!';
+            } catch {
+                reply = 'Anslutningsfel. Kontrollera att appen är uppdaterad.';
+            }
+        }
+
+        typing.remove();
+        addChatBubble(reply, 'bot');
+
+    } catch (err) {
+        typing.remove();
+        addChatBubble('Kunde inte ansluta. Kolla internet.', 'bot');
+    }
+}
+
 // ---- Start ----
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    init();
+    initChat();
+});

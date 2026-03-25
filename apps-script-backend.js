@@ -64,6 +64,11 @@ function doPost(e) {
       ).setMimeType(ContentService.MimeType.JSON);
     }
 
+    // Route: Chat mode
+    if (data.action === 'chat') {
+      return handleChat(data.message);
+    }
+
     const text = data.text;
     const timestamp = data.timestamp || new Date().toISOString();
     const source = data.source || 'unknown';
@@ -88,6 +93,9 @@ function doPost(e) {
 
     // Append to sheet
     appendToSheet(timestamp, text, classification, source, attachmentUrl, attachmentThumbUrl);
+
+    // Auto-bootstrap: ensure daily digest trigger exists
+    ensureDailyTrigger();
 
     return ContentService.createTextOutput(
       JSON.stringify({ status: 'ok', classification: classification })
@@ -365,9 +373,30 @@ Svara i ren text, inga markdown-headers. Max 300 ord.`;
   Logger.log('Digest sent to ' + userEmail + ' with ' + pending.length + ' items.');
 }
 
-// ---- Setup daily trigger (run ONCE) ----
+// ---- Auto-ensure daily trigger (called from doPost) ----
+function ensureDailyTrigger() {
+  try {
+    // Check if trigger already exists
+    const triggers = ScriptApp.getProjectTriggers();
+    const hasDigest = triggers.some(t => t.getHandlerFunction() === 'sendDailyDigest');
+    
+    if (!hasDigest) {
+      ScriptApp.newTrigger('sendDailyDigest')
+        .timeBased()
+        .atHour(6)
+        .everyDays(1)
+        .inTimezone('Europe/Stockholm')
+        .create();
+      Logger.log('✅ Daily digest trigger auto-created for 06:00 CET.');
+    }
+  } catch(e) {
+    Logger.log('Trigger setup skipped: ' + e.message);
+  }
+}
+
+// ---- Manual setup (run once if auto doesn't work) ----
 function setupDailyTrigger() {
-  // Remove existing triggers for this function
+  // Remove existing triggers
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(t => {
     if (t.getHandlerFunction() === 'sendDailyDigest') {
@@ -375,7 +404,6 @@ function setupDailyTrigger() {
     }
   });
 
-  // Create new trigger at 06:00
   ScriptApp.newTrigger('sendDailyDigest')
     .timeBased()
     .atHour(6)
@@ -405,4 +433,81 @@ function testClassification() {
 
 function testDigest() {
   sendDailyDigest();
+}
+
+// ---- AI Chat Handler ----
+function handleChat(message) {
+  try {
+    // Read active tasks from Sheet
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Sheet1')
+      || SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    var data = sheet.getDataRange().getValues();
+    
+    var tasks = [];
+    var doneCount = 0;
+    for (var i = 1; i < data.length; i++) {
+      var text = (data[i][1] || '').toString().trim();
+      if (!text) continue;
+      var status = data[i][9];
+      if (status === true) { doneCount++; continue; }
+      tasks.push({
+        row: i + 1,
+        text: text,
+        category: data[i][2] || '',
+        priority: data[i][3] || 'none',
+        summary: (data[i][6] || text).toString().substring(0, 100)
+      });
+    }
+
+    // Build context for Gemini
+    var taskList = tasks.map(function(t) {
+      var emoji = t.priority === 'high' ? '🔴' : (t.priority === 'medium' ? '🟡' : '⚪');
+      return emoji + ' [' + t.priority + '] ' + t.summary;
+    }).join('\n');
+
+    var now = new Date();
+    var dateStr = now.toISOString().substring(0, 10);
+    var dayNames = ['söndag','måndag','tisdag','onsdag','torsdag','fredag','lördag'];
+    var dayName = dayNames[now.getDay()];
+
+    var prompt = 'Du är en smart personlig assistent för Hampus. '
+      + 'Du har tillgång till hans task-lista. Svara kortfattat och direkt på svenska (eller engelska om han skriver på engelska). '
+      + 'Var praktisk och konkret. Använd emoji för tydlighet.\n\n'
+      + 'IDAG: ' + dateStr + ' (' + dayName + ')\n'
+      + 'AKTIVA TASKS (' + tasks.length + ' st, ' + doneCount + ' klara):\n'
+      + taskList + '\n\n'
+      + 'ANVÄNDARENS MEDDELANDE:\n' + message;
+
+    var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey;
+    
+    var response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 500 }
+      }),
+      muteHttpExceptions: true
+    });
+
+    var result = JSON.parse(response.getContentText());
+    var reply = '';
+    
+    if (result.candidates && result.candidates[0] && result.candidates[0].content) {
+      reply = result.candidates[0].content.parts[0].text;
+    } else {
+      reply = 'Kunde inte generera svar. Försök igen.';
+    }
+
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'ok', reply: reply })
+    ).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    Logger.log('Chat error: ' + err.toString());
+    return ContentService.createTextOutput(
+      JSON.stringify({ status: 'error', reply: 'Fel: ' + err.toString() })
+    ).setMimeType(ContentService.MimeType.JSON);
+  }
 }
