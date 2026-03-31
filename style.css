@@ -96,6 +96,39 @@ html, body {
 }
 
 /* ---- Attachment ---- */
+/* Mode Toggle */
+.mode-toggle {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    margin-bottom: 12px;
+    width: fit-content;
+}
+
+.mode-btn {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 16px;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mode-btn.active {
+    background: var(--accent);
+    color: white;
+}
+
+.mode-btn:not(.active):hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.05);
+}
 
 .attach-btn {
     width: 42px;

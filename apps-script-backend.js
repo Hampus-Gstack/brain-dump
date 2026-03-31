@@ -69,6 +69,9 @@ function doPost(e) {
       return handleChat(data.message);
     }
 
+    // Route: Vault mode (ideas, journal, thoughts)
+    const vaultMode = data.mode === 'vault';
+
     const text = data.text;
     const timestamp = data.timestamp || new Date().toISOString();
     const source = data.source || 'unknown';
@@ -90,6 +93,12 @@ function doPost(e) {
 
     // Classify with Gemini
     const classification = classifyWithGemini(text || 'file attachment');
+
+    // Force vault categories if in vault mode
+    if (vaultMode) {
+      classification.category = classification.category === 'journal' ? 'journal' : 'idea';
+      classification.priority = 'none';
+    }
 
     // Append to sheet
     appendToSheet(timestamp, text, classification, source, attachmentUrl, attachmentThumbUrl);
@@ -290,6 +299,23 @@ function appendToSheet(timestamp, rawText, classification, source, attachmentUrl
       Logger.log('Journal routing error: ' + e.message);
     }
   }
+
+  // Auto-route ideas to Vault sheet
+  if (category === 'idea') {
+    try {
+      var ss2 = SpreadsheetApp.getActiveSpreadsheet();
+      var vaultSheet = ss2.getSheetByName('Vault');
+      if (!vaultSheet) {
+        vaultSheet = ss2.insertSheet('Vault');
+        vaultSheet.appendRow(['Date', 'Idea', 'Tags', 'Status']);
+        vaultSheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#e8e8e8');
+      }
+      var dateStr2 = (timestamp || '').substring(0, 10);
+      vaultSheet.appendRow([dateStr2, rawText, (classification.tags || []).join(', '), 'parked']);
+    } catch(e2) {
+      Logger.log('Vault routing error: ' + e2.message);
+    }
+  }
 }
 
 // ---- Daily AI Email Digest ----
@@ -479,7 +505,7 @@ function handleChat(message) {
       + 'ANVÄNDARENS MEDDELANDE:\n' + message;
 
     var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + apiKey;
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey;
     
     var response = UrlFetchApp.fetch(url, {
       method: 'post',

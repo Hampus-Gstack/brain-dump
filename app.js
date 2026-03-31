@@ -42,6 +42,11 @@ const queueCount = document.getElementById('queueCount');
 // Current attachment state
 let currentAttachment = null;
 
+// Mode state: 'task' or 'vault'
+let currentMode = 'task';
+const modeTask = document.getElementById('modeTask');
+const modeVault = document.getElementById('modeVault');
+
 // Voice recognition state
 let recognition = null;
 let isListening = false;
@@ -74,6 +79,10 @@ function init() {
     attachBtn.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', handleFileSelect);
     removeAttachment.addEventListener('click', clearAttachment);
+
+    // Mode toggle
+    if (modeTask) modeTask.addEventListener('click', () => setMode('task'));
+    if (modeVault) modeVault.addEventListener('click', () => setMode('vault'));
 
     // Voice input
     initVoice();
@@ -210,6 +219,15 @@ function stopVoice() {
 }
 
 // ---- Submit Handler ----
+// ---- Mode Toggle ----
+function setMode(mode) {
+    currentMode = mode;
+    if (modeTask) modeTask.classList.toggle('active', mode === 'task');
+    if (modeVault) modeVault.classList.toggle('active', mode === 'vault');
+    input.placeholder = mode === 'vault' ? 'Idea, thought, journal...' : 'Dump it...';
+    input.focus();
+}
+
 async function handleSubmit() {
     // Stop voice if listening
     if (isListening) stopVoice();
@@ -231,7 +249,8 @@ async function handleSubmit() {
         text: text || (attachment ? '📎 ' + attachment.name : ''),
         timestamp: new Date().toISOString(),
         source: 'pwa',
-        secret: CONFIG.DUMP_SECRET
+        secret: CONFIG.DUMP_SECRET,
+        mode: currentMode
     };
 
     if (attachment) {
