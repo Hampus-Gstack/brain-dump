@@ -91,14 +91,8 @@ function doPost(e) {
       attachmentThumbUrl = result.thumbUrl;
     }
 
-    // Classify with Gemini
+    // Classify with Gemini (auto-routes ideas/journal/thoughts to Vault/Journal sheets)
     const classification = classifyWithGemini(text || 'file attachment');
-
-    // Force vault categories if in vault mode
-    if (vaultMode) {
-      classification.category = classification.category === 'journal' ? 'journal' : 'idea';
-      classification.priority = 'none';
-    }
 
     // Append to sheet
     appendToSheet(timestamp, text, classification, source, attachmentUrl, attachmentThumbUrl);

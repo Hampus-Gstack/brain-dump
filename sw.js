@@ -4,7 +4,7 @@
    queues failed submissions for retry.
    ============================================ */
 
-const CACHE_NAME = 'braindump-v10';
+const CACHE_NAME = 'braindump-v11';
 const ASSETS = [
     './',
     './index.html',
