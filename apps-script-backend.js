@@ -137,8 +137,22 @@ function uploadToDrive(attachment) {
   return { url: url, thumbUrl: thumbUrl };
 }
 
-// ---- Also handle GET for testing ----
+// ---- Also handle GET for testing + chat (CORS-friendly) ----
 function doGet(e) {
+  var params = e.parameter || {};
+  
+  // Route: Chat via GET (CORS-friendly, responses readable cross-origin)
+  if (params.action === 'chat' && params.message) {
+    // Validate secret
+    if (!validateSecret(params)) {
+      return ContentService.createTextOutput(
+        JSON.stringify({ status: 'error', message: 'Unauthorized' })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+    return handleChat(params.message);
+  }
+  
+  // Default: health check
   return ContentService.createTextOutput(
     JSON.stringify({ status: 'ok', message: 'Brain Dump backend is running.' })
   ).setMimeType(ContentService.MimeType.JSON);

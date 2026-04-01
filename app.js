@@ -461,33 +461,32 @@ async function sendChat() {
     const typing = addTypingIndicator();
 
     try {
-        // Use fetch with no-cors (can't read response directly from Apps Script web app)
-        // Instead, use a JSONP-style GET request via doGet workaround
-        // But simpler: use fetch POST and accept opaque response, re-fetch via GET
-        const response = await fetch(CONFIG.APPS_SCRIPT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify({
-                action: 'chat',
-                message: msg,
-                secret: CONFIG.DUMP_SECRET
-            }),
+        // Use GET request via doGet — Apps Script returns proper CORS headers
+        // on GET after the 302 redirect to googleusercontent.com.
+        // POST responses are opaque and unreadable cross-origin.
+        const params = new URLSearchParams({
+            action: 'chat',
+            message: msg,
+            secret: CONFIG.DUMP_SECRET
+        });
+        const response = await fetch(CONFIG.APPS_SCRIPT_URL + '?' + params.toString(), {
+            method: 'GET',
             redirect: 'follow'
         });
 
         let reply = '';
-        try {
-            const data = await response.json();
-            reply = data.reply || 'Inget svar mottaget.';
-        } catch {
-            // If CORS blocks reading, try text
+        if (response.ok) {
             try {
-                const text = await response.text();
-                const match = text.match(/"reply"\s*:\s*"([^"]+)"/);
-                reply = match ? match[1] : 'Svar mottaget men kunde inte läsas (CORS). Prova igen!';
+                const data = await response.json();
+                reply = data.reply || 'Inget svar mottaget.';
             } catch {
-                reply = 'Anslutningsfel. Kontrollera att appen är uppdaterad.';
+                const text = await response.text();
+                // Try to extract reply from HTML-wrapped JSON
+                const match = text.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+                reply = match ? match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : text.substring(0, 500) || 'Kunde inte tolka svaret.';
             }
+        } else {
+            reply = `Serverfel (${response.status}). Försök igen.`;
         }
 
         typing.remove();
