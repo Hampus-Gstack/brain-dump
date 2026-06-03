@@ -97,9 +97,10 @@ function doPost(e) {
     // Append to sheet
     appendToSheet(timestamp, text, classification, source, attachmentUrl, attachmentThumbUrl);
 
-    // Auto-bootstrap: ensure daily triggers exist (digest + archive)
+    // Auto-bootstrap: ensure triggers exist (digest + archive + weekly review)
     ensureDailyTrigger();
     ensureArchiveTrigger();
+    ensureWeeklyTrigger();
 
     return ContentService.createTextOutput(
       JSON.stringify({ status: 'ok', classification: classification })
@@ -141,7 +142,20 @@ function uploadToDrive(attachment) {
 // ---- Also handle GET for testing + chat (CORS-friendly) ----
 function doGet(e) {
   var params = e.parameter || {};
-  
+
+  // Route: Mobile triage view (passcode-gated, CORS-friendly reads/writes)
+  if (params.action === 'triage_setpass') {
+    return jsonOut(handleTriageSetPass(params));
+  }
+  if (params.action === 'triage_list') {
+    if (!validateTriagePass(params.pass)) return jsonOut({ status: 'error', message: 'unauthorized' });
+    return jsonOut(triageList());
+  }
+  if (params.action === 'triage_update') {
+    if (!validateTriagePass(params.pass)) return jsonOut({ status: 'error', message: 'unauthorized' });
+    return jsonOut(triageUpdate(params));
+  }
+
   // Route: Chat via GET (CORS-friendly, responses readable cross-origin)
   if (params.action === 'chat' && params.message) {
     // Validate secret
@@ -576,6 +590,171 @@ function setupDailyTrigger() {
     .create();
 
   Logger.log('Daily digest trigger set for 06:00 CET.');
+}
+
+// ============================================
+//  Mobile triage view — passcode-gated read/write
+// ============================================
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+function bd_sha256(s) {
+  var raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,
+    String(s), Utilities.Charset.UTF_8);
+  return raw.map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+}
+function validateTriagePass(p) {
+  if (!p) return false;
+  var h = PropertiesService.getScriptProperties().getProperty('TRIAGE_PASS');
+  return !!h && bd_sha256(p) === h;
+}
+// Claim-on-first-run: if no passcode is set yet, the spam-secret lets you set one.
+// Once set, changing it requires the current passcode (oldpass).
+function handleTriageSetPass(params) {
+  var props = PropertiesService.getScriptProperties();
+  var existing = props.getProperty('TRIAGE_PASS');
+  if (params.secret !== props.getProperty('DUMP_SECRET')) {
+    return { status: 'error', message: 'unauthorized' };
+  }
+  if (!params.newpass || String(params.newpass).length < 4) {
+    return { status: 'error', message: 'passcode too short (min 4)' };
+  }
+  if (existing && !validateTriagePass(params.oldpass)) {
+    return { status: 'error', message: 'wrong current passcode' };
+  }
+  // Reset/rotate: '__UNCLAIM__' clears the passcode (requires current passcode above).
+  if (params.newpass === '__UNCLAIM__') {
+    props.deleteProperty('TRIAGE_PASS');
+    return { status: 'ok', unclaimed: true };
+  }
+  props.setProperty('TRIAGE_PASS', bd_sha256(params.newpass));
+  return { status: 'ok', claimed: !existing };
+}
+function _triageSheet() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Sheet1')
+    || SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+}
+// Returns the actionable surface (high/medium/action, excl. done + BLOCKED) + inbox count.
+function triageList() {
+  var data = _triageSheet().getDataRange().getValues();
+  var now = new Date();
+  var tasks = [], inbox = 0, waiting = 0, blocked = 0;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][9] === true) continue;
+    var cat = (data[i][2] || '').toString().toLowerCase();
+    var prio = (data[i][3] || 'none').toString().toLowerCase();
+    var deps = (data[i][10] || '').toString();
+    if (deps.indexOf('BLOCKED:') === 0) { blocked++; continue; }
+    if (deps.indexOf('@waiting') >= 0) { waiting++; continue; }
+    var isAction = (prio === 'high' || prio === 'medium' || cat === 'action');
+    if (!isAction) { inbox++; continue; }
+    var age = '';
+    var ts = (data[i][0] || '').toString();
+    if (ts.length >= 10) {
+      var d = new Date(ts.substring(0, 10));
+      if (!isNaN(d)) age = Math.round((now - d) / 86400000);
+    }
+    tasks.push({
+      row: i + 1,
+      summary: (data[i][6] || data[i][1] || '').toString(),
+      priority: prio, category: cat,
+      tags: (data[i][4] || '').toString(),
+      note: deps, age: age
+    });
+  }
+  var order = { high: 0, medium: 1 };
+  tasks.sort(function (a, b) {
+    return (order[a.priority] === undefined ? 2 : order[a.priority]) -
+           (order[b.priority] === undefined ? 2 : order[b.priority]);
+  });
+  return { status: 'ok', tasks: tasks, counts: { actionable: tasks.length, inbox: inbox, waiting: waiting, blocked: blocked } };
+}
+// Mutate one row: op=done | prio (value=high|medium|low|none) | defer (priority→low + note)
+function triageUpdate(params) {
+  var sheet = _triageSheet();
+  var row = parseInt(params.row, 10);
+  if (!row || row < 2 || row > sheet.getLastRow()) return { status: 'error', message: 'bad row' };
+  var op = params.op;
+  if (op === 'done') {
+    sheet.getRange(row, 10).setValue(true);
+  } else if (op === 'prio') {
+    var v = (params.value || '').toLowerCase();
+    if (['high', 'medium', 'low', 'none'].indexOf(v) < 0) return { status: 'error', message: 'bad priority' };
+    sheet.getRange(row, 4).setValue(v);
+  } else if (op === 'defer') {
+    sheet.getRange(row, 4).setValue('low');
+    sheet.getRange(row, 11).setValue('pushad (från mobil triage)');
+  } else {
+    return { status: 'error', message: 'bad op' };
+  }
+  return { status: 'ok', row: row, op: op };
+}
+
+// ============================================
+//  Weekly review email (Sunday 18:00 CET)
+// ============================================
+function sendWeeklyReview() {
+  var sheet = _triageSheet();
+  var data = sheet.getDataRange().getValues();
+  var now = new Date();
+  var stale = [], waiting = [], blocked = [], inbox = 0, high = 0, med = 0;
+  var STALE = 14;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][9] === true) continue;
+    var cat = (data[i][2] || '').toString().toLowerCase();
+    var prio = (data[i][3] || 'none').toString().toLowerCase();
+    var deps = (data[i][10] || '').toString();
+    var summ = (data[i][6] || data[i][1] || '').toString();
+    var age = null, ts = (data[i][0] || '').toString();
+    if (ts.length >= 10) { var d = new Date(ts.substring(0, 10)); if (!isNaN(d)) age = Math.round((now - d) / 86400000); }
+    if (deps.indexOf('BLOCKED:') === 0) { blocked.push(summ); continue; }
+    if (deps.indexOf('@waiting') >= 0) { waiting.push(summ + (deps ? '  (' + deps + ')' : '')); continue; }
+    var isAction = (prio === 'high' || prio === 'medium' || cat === 'action');
+    if (isAction) { if (prio === 'high') high++; else if (prio === 'medium') med++; }
+    else inbox++;
+    if (age !== null && age > STALE && isAction) stale.push({ summ: summ, age: age });
+  }
+  stale.sort(function (a, b) { return b.age - a.age; });
+
+  var lines = [];
+  lines.push('🧠 Weekly Review — ' + now.toISOString().substring(0, 10));
+  lines.push('');
+  lines.push('Aktiva: 🔴 ' + high + ' hög | 🟡 ' + med + ' medium | 📥 ' + inbox + ' inbox');
+  lines.push('');
+  lines.push('🔴 STALE >' + STALE + 'd (' + stale.length + ') — gör / döda / Someday→Vault:');
+  stale.slice(0, 25).forEach(function (s) { lines.push('  • [' + s.age + 'd] ' + s.summ); });
+  if (stale.length > 25) lines.push('  …+' + (stale.length - 25) + ' till');
+  lines.push('');
+  lines.push('⏳ WAITING (' + waiting.length + '):');
+  waiting.forEach(function (w) { lines.push('  • ' + w); });
+  lines.push('');
+  lines.push('🚫 BLOCKED (' + blocked.length + '):');
+  blocked.forEach(function (b) { lines.push('  • ' + b); });
+  lines.push('');
+  lines.push('Checklista: COLLECT · PROCESS none · REVIEW projekt/waiting/someday · CLEAN UP · SET INTENTIONS (3-5 saker)');
+  lines.push('Öppna: ' + SpreadsheetApp.getActiveSpreadsheet().getUrl());
+
+  MailApp.sendEmail({
+    to: Session.getActiveUser().getEmail(),
+    subject: '🧠 Weekly Review — ' + stale.length + ' stale, ' + waiting.length + ' waiting',
+    body: lines.join('\n')
+  });
+  Logger.log('Weekly review sent.');
+}
+function ensureWeeklyTrigger() {
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var has = triggers.some(function (t) { return t.getHandlerFunction() === 'sendWeeklyReview'; });
+    if (!has) {
+      ScriptApp.newTrigger('sendWeeklyReview')
+        .timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(18)
+        .inTimezone('Europe/Stockholm').create();
+      Logger.log('✅ Weekly review trigger auto-created for Sunday 18:00 CET.');
+    }
+  } catch (e) {
+    Logger.log('Weekly trigger setup skipped: ' + e.message);
+  }
 }
 
 // ---- Test functions ----

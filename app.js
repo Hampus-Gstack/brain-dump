@@ -498,8 +498,188 @@ async function sendChat() {
     }
 }
 
+// ============================================
+//  Mobile Triage View — secured task overview
+// ============================================
+const TRIAGE_PASS_KEY = 'braindump_triage_pass';
+const triagePanel = document.getElementById('triagePanel');
+const triageAuth = document.getElementById('triageAuth');
+const triageAuthLabel = document.getElementById('triageAuthLabel');
+const triageAuthErr = document.getElementById('triageAuthErr');
+const triageBody = document.getElementById('triageBody');
+const triageCounts = document.getElementById('triageCounts');
+const triageListEl = document.getElementById('triageList');
+const triagePassInput = document.getElementById('triagePass');
+
+let triageOpen = false;
+let triageClaiming = false;
+
+function getTriagePass() { return localStorage.getItem(TRIAGE_PASS_KEY) || ''; }
+function setTriagePass(p) { localStorage.setItem(TRIAGE_PASS_KEY, p); }
+function clearTriagePass() { localStorage.removeItem(TRIAGE_PASS_KEY); }
+
+// Robust GET → JSON (mirrors chat: parse JSON, fall back to extracting from HTML)
+async function triageApi(params) {
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(CONFIG.APPS_SCRIPT_URL + '?' + qs, { method: 'GET', redirect: 'follow' });
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch {
+        const m = text.match(/\{[\s\S]*\}/);
+        if (m) { try { return JSON.parse(m[0]); } catch {} }
+        return { status: 'error', message: 'parse' };
+    }
+}
+
+function initTriage() {
+    const toggle = document.getElementById('triageToggle');
+    const close = document.getElementById('triageClose');
+    const refresh = document.getElementById('triageRefresh');
+    const lock = document.getElementById('triageLock');
+    const enter = document.getElementById('triageEnter');
+    const claim = document.getElementById('triageClaim');
+
+    if (toggle) toggle.addEventListener('click', openTriage);
+    if (close) close.addEventListener('click', closeTriage);
+    if (refresh) refresh.addEventListener('click', loadTriage);
+    if (lock) lock.addEventListener('click', () => { clearTriagePass(); showTriageAuth(); });
+    if (enter) enter.addEventListener('click', submitTriagePass);
+    if (claim) claim.addEventListener('click', () => {
+        triageClaiming = !triageClaiming;
+        triageAuthLabel.textContent = triageClaiming ? 'Välj ett nytt lösenord (min 4)' : 'Ange lösenord';
+        claim.textContent = triageClaiming ? '← Tillbaka' : 'Första gången? Sätt lösenord';
+        triageAuthErr.textContent = '';
+        triagePassInput.focus();
+    });
+    if (triagePassInput) triagePassInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitTriagePass();
+    });
+}
+
+function openTriage() {
+    triageOpen = true;
+    triagePanel.classList.add('open');
+    if (getTriagePass()) loadTriage();
+    else showTriageAuth();
+}
+function closeTriage() {
+    triageOpen = false;
+    triagePanel.classList.remove('open');
+}
+function showTriageAuth() {
+    triageBody.style.display = 'none';
+    triageAuth.style.display = 'flex';
+    triageAuthErr.textContent = '';
+    triagePassInput.value = '';
+    triagePassInput.focus();
+}
+
+async function submitTriagePass() {
+    const pass = triagePassInput.value.trim();
+    if (!pass) return;
+    triageAuthErr.textContent = '…';
+    if (triageClaiming) {
+        const r = await triageApi({ action: 'triage_setpass', secret: CONFIG.DUMP_SECRET, newpass: pass });
+        if (r.status === 'ok') {
+            setTriagePass(pass);
+            triageClaiming = false;
+            loadTriage();
+        } else {
+            triageAuthErr.textContent = r.message === 'unauthorized'
+                ? 'Lösenord redan satt — ange det istället.'
+                : ('Fel: ' + (r.message || 'okänt'));
+        }
+    } else {
+        // verify by attempting a list
+        const r = await triageApi({ action: 'triage_list', pass });
+        if (r.status === 'ok') { setTriagePass(pass); renderTriage(r); }
+        else triageAuthErr.textContent = 'Fel lösenord (eller inte satt än).';
+    }
+}
+
+async function loadTriage() {
+    const pass = getTriagePass();
+    if (!pass) return showTriageAuth();
+    triageAuth.style.display = 'none';
+    triageBody.style.display = 'block';
+    triageListEl.innerHTML = '<p class="triage-empty">Laddar…</p>';
+    const r = await triageApi({ action: 'triage_list', pass });
+    if (r.status !== 'ok') { clearTriagePass(); return showTriageAuth(); }
+    renderTriage(r);
+}
+
+function renderTriage(r) {
+    triageAuth.style.display = 'none';
+    triageBody.style.display = 'block';
+    const c = r.counts || {};
+    triageCounts.innerHTML =
+        `<span class="tc tc-act">🎯 ${c.actionable || 0}</span>` +
+        `<span class="tc tc-wait">⏳ ${c.waiting || 0}</span>` +
+        `<span class="tc tc-block">🚫 ${c.blocked || 0}</span>` +
+        `<span class="tc tc-inbox">📥 ${c.inbox || 0}</span>`;
+
+    const tasks = r.tasks || [];
+    if (!tasks.length) { triageListEl.innerHTML = '<p class="triage-empty">Inga aktionerbara tasks 🎉</p>'; return; }
+    triageListEl.innerHTML = '';
+    tasks.forEach((t) => triageListEl.appendChild(taskCard(t)));
+}
+
+function taskCard(t) {
+    const card = document.createElement('div');
+    card.className = 'task-card prio-' + t.priority;
+    const ageTxt = (t.age !== '' && t.age > 14) ? `<span class="task-age">⏳${t.age}d</span>` : '';
+    const dupTxt = (t.note && t.note.indexOf('POSSIBLE DUP') === 0) ? `<span class="task-dup">🔁 dup</span>` : '';
+    card.innerHTML =
+        `<div class="task-main">
+            <div class="task-summary">${escapeHtml(t.summary)}</div>
+            <div class="task-meta">
+                <button class="task-prio" data-prio="${t.priority}">${prioLabel(t.priority)}</button>
+                ${ageTxt}${dupTxt}
+                <span class="task-tags">${escapeHtml(t.tags || '')}</span>
+            </div>
+        </div>
+        <div class="task-actions">
+            <button class="task-btn task-done" title="Klar">✓</button>
+            <button class="task-btn task-defer" title="Skjut till nästa vecka">⏭</button>
+        </div>`;
+
+    card.querySelector('.task-done').addEventListener('click', () => taskAction(t.row, { op: 'done' }, card));
+    card.querySelector('.task-defer').addEventListener('click', () => taskAction(t.row, { op: 'defer' }, card));
+    card.querySelector('.task-prio').addEventListener('click', () => {
+        const next = nextPrio(t.priority);
+        taskAction(t.row, { op: 'prio', value: next }, card, false);
+    });
+    return card;
+}
+
+function prioLabel(p) { return ({ high: '🔴 hög', medium: '🟡 medium', low: '🟢 låg', none: '⚪ none' })[p] || p; }
+function nextPrio(p) { return ({ high: 'medium', medium: 'low', low: 'high', none: 'high' })[p] || 'medium'; }
+
+async function taskAction(row, opts, card, removeOnDone = true) {
+    card.classList.add('task-busy');
+    const r = await triageApi(Object.assign({ action: 'triage_update', pass: getTriagePass(), row }, opts));
+    card.classList.remove('task-busy');
+    if (r.status !== 'ok') { showError('Kunde inte uppdatera.'); return; }
+    if (opts.op === 'done' || opts.op === 'defer') {
+        if (removeOnDone) {
+            card.classList.add('task-removed');
+            setTimeout(() => { card.remove(); loadTriage(); }, 350);
+        }
+    } else {
+        // priority change → reload to re-sort/re-filter
+        loadTriage();
+    }
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // ---- Start ----
 document.addEventListener('DOMContentLoaded', () => {
     init();
     initChat();
+    initTriage();
 });

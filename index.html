@@ -94,9 +94,46 @@
             </div>
         </div>
 
+        <!-- Triage Panel (mobile task overview) -->
+        <div class="triage-panel" id="triagePanel">
+            <div class="triage-header">
+                <span class="triage-title">📋 Tasks</span>
+                <div class="triage-head-actions">
+                    <button id="triageRefresh" class="triage-icon-btn" aria-label="Refresh">⟳</button>
+                    <button id="triageLock" class="triage-icon-btn" aria-label="Lock">🔒</button>
+                    <button id="triageClose" class="triage-icon-btn" aria-label="Close">✕</button>
+                </div>
+            </div>
+
+            <!-- Auth gate -->
+            <div class="triage-auth" id="triageAuth">
+                <p class="triage-auth-label" id="triageAuthLabel">Ange lösenord</p>
+                <input type="password" id="triagePass" class="triage-pass-input" placeholder="••••••" inputmode="text" />
+                <button id="triageEnter" class="triage-btn-primary">Öppna</button>
+                <button id="triageClaim" class="triage-btn-ghost">Första gången? Sätt lösenord</button>
+                <p class="triage-auth-err" id="triageAuthErr"></p>
+            </div>
+
+            <!-- Task list -->
+            <div class="triage-body" id="triageBody" style="display:none">
+                <div class="triage-counts" id="triageCounts"></div>
+                <div class="triage-list" id="triageList"></div>
+            </div>
+        </div>
+
         <!-- Footer -->
         <div class="footer">
             <a href="#" id="logLink" class="log-link">View Log ↗</a>
+            <button id="triageToggle" class="triage-toggle" aria-label="Tasks">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="8" y1="6" x2="21" y2="6"></line>
+                    <line x1="8" y1="12" x2="21" y2="12"></line>
+                    <line x1="8" y1="18" x2="21" y2="18"></line>
+                    <polyline points="3 6 4 7 6 5"></polyline>
+                    <polyline points="3 12 4 13 6 11"></polyline>
+                    <polyline points="3 18 4 19 6 17"></polyline>
+                </svg>
+            </button>
             <button id="chatToggle" class="chat-toggle" aria-label="Chat">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>

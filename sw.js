@@ -4,7 +4,7 @@
    queues failed submissions for retry.
    ============================================ */
 
-const CACHE_NAME = 'braindump-v11';
+const CACHE_NAME = 'braindump-v12';
 const ASSETS = [
     './',
     './index.html',
@@ -42,6 +42,10 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
     // Don't cache POST requests (these go to Apps Script)
     if (event.request.method !== 'GET') return;
+
+    // Never cache Apps Script API calls (chat / triage / capture) — must be fresh,
+    // else the mobile triage view would render a stale task list.
+    if (/script\.google\.com|googleusercontent\.com/.test(event.request.url)) return;
 
     event.respondWith(
         caches.match(event.request).then((cached) => {
