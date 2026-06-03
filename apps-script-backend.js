@@ -97,8 +97,9 @@ function doPost(e) {
     // Append to sheet
     appendToSheet(timestamp, text, classification, source, attachmentUrl, attachmentThumbUrl);
 
-    // Auto-bootstrap: ensure daily digest trigger exists
+    // Auto-bootstrap: ensure daily triggers exist (digest + archive)
     ensureDailyTrigger();
+    ensureArchiveTrigger();
 
     return ContentService.createTextOutput(
       JSON.stringify({ status: 'ok', classification: classification })
@@ -182,7 +183,7 @@ Text: "${text}"
 
 Respond with ONLY valid JSON (no markdown, no code fences):
 {
-  "category": "todo|thought|journal|idea|action|question|note",
+  "category": "todo|thought|journal|idea|action|question|note|fragment",
   "priority": "high|medium|low|none",
   "tags": ["tag1", "tag2"],
   "language": "en|sv",
@@ -192,6 +193,12 @@ Respond with ONLY valid JSON (no markdown, no code fences):
 Rules:
 - category "action" = urgent, time-sensitive (e.g. "call X today")
 - category "todo" = standard task, not urgent
+- category "fragment" = incomplete/unparseable capture with NO clear meaning or action
+  (e.g. trails off mid-sentence, a single dangling word, ends in a comma). Be conservative:
+  a short but complete thought is NOT a fragment.
+- IMPORTANT: if the text contains an imperative verb (ring, kolla, gör, skriv, boka, skicka,
+  betala, fixa, call, send, buy, fix) it is a "todo" or "action" — never "note".
+- "note" = pure reference/info to remember, with no action.
 - priority is based on urgency and impact
 - tags should be 1-3 keywords capturing the topic
 - summary should be a clean, concise version of the input
@@ -239,6 +246,47 @@ Rules:
   };
 }
 
+// ---- Near-duplicate detection helpers ----
+function bd_normalize(s) {
+  return (s || '').toString().toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+function bd_tokenSet(s) {
+  var set = {};
+  bd_normalize(s).split(' ').forEach(function (w) { if (w.length > 2) set[w] = 1; });
+  return set;
+}
+function bd_jaccard(a, b) {
+  var ka = Object.keys(a), kb = Object.keys(b);
+  if (!ka.length || !kb.length) return 0;
+  var inter = 0;
+  ka.forEach(function (w) { if (b[w]) inter++; });
+  var uni = ka.length + kb.length - inter;
+  return uni ? inter / uni : 0;
+}
+// Returns a 'POSSIBLE DUP: rad N — ...' string if the new capture closely matches
+// a recent active row, else ''. Scans the last ~60 rows only. Flag is advisory.
+function findPossibleDuplicate(sheet, rawText, summary) {
+  try {
+    var newSet = bd_tokenSet(summary + ' ' + rawText);
+    if (Object.keys(newSet).length < 2) return '';
+    var data = sheet.getDataRange().getValues();
+    var start = Math.max(1, data.length - 60);
+    for (var i = data.length - 1; i >= start; i--) {
+      if (data[i][9] === true) continue; // skip done
+      var existSet = bd_tokenSet((data[i][6] || '') + ' ' + (data[i][1] || ''));
+      if (bd_jaccard(newSet, existSet) >= 0.6) {
+        return 'POSSIBLE DUP: rad ' + (i + 1) + ' — ' +
+          (data[i][6] || data[i][1] || '').toString().substring(0, 50);
+      }
+    }
+  } catch (e) {
+    Logger.log('dup check error: ' + e.message);
+  }
+  return '';
+}
+
 // ---- Append classified entry to Google Sheet ----
 function appendToSheet(timestamp, rawText, classification, source, attachmentUrl, attachmentThumbUrl) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Sheet1') 
@@ -263,14 +311,20 @@ function appendToSheet(timestamp, rawText, classification, source, attachmentUrl
     attachmentCell = attachmentUrl;
   }
 
+  var category = classification.category || 'note';
+  var summary = classification.summary || (rawText || '').substring(0, 80);
+
+  // Near-duplicate detection (non-blocking flag in column K)
+  var dupNote = findPossibleDuplicate(sheet, rawText, summary);
+
   const row = [
     timestamp,
     rawText,
-    classification.category || 'note',
+    category,
     classification.priority || 'none',
     (classification.tags || []).join(', '),
     classification.language || 'unknown',
-    classification.summary || (rawText || '').substring(0, 80),
+    summary,
     source,
     attachmentCell
   ];
@@ -279,8 +333,17 @@ function appendToSheet(timestamp, rawText, classification, source, attachmentUrl
 
   const lastRow = sheet.getLastRow();
 
-  // Add status checkbox (unchecked)
+  // Status checkbox. Reference captures (journal/thought/idea/fragment) are NOT
+  // active tasks — auto-complete them so the nightly archive sweeps them out and
+  // they never clutter the active list. They are still logged here + routed to
+  // Journal/Vault below, so nothing is lost.
+  var isReference = (category === 'journal' || category === 'thought' ||
+                     category === 'idea' || category === 'fragment');
   sheet.getRange(lastRow, 10).insertCheckboxes();
+  if (isReference) sheet.getRange(lastRow, 10).setValue(true);
+
+  // Near-duplicate flag → column K
+  if (dupNote) sheet.getRange(lastRow, 11).setValue(dupNote);
 
   // If there's a thumbnail, add IMAGE formula in the row
   if (attachmentThumbUrl) {
@@ -290,7 +353,6 @@ function appendToSheet(timestamp, rawText, classification, source, attachmentUrl
   }
 
   // Auto-route journal/thought entries to Journal sheet
-  var category = classification.category || 'note';
   if (category === 'journal' || category === 'thought') {
     try {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -333,34 +395,42 @@ function sendDailyDigest() {
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
 
-  // Collect unchecked items (column J = false or empty)
-  const pending = [];
+  // Collect unchecked items (column J = false or empty), split actionable vs inbox.
+  // Actionable = the daily-brief surface: high/medium priority, or category 'action'.
+  // Inbox = low/none/notes/reflections — collapsed to a count, not dumped in the email.
+  const actionable = [];
+  const inbox = [];
   for (let i = 1; i < data.length; i++) {
     const status = data[i][9]; // column J
-    if (status !== true) {
-      pending.push({
-        text: data[i][1],  // Raw Text
-        category: data[i][2],
-        priority: data[i][3],
-        summary: data[i][6],
-        timestamp: data[i][0]
-      });
-    }
+    if (status === true) continue;
+    const item = {
+      text: data[i][1],
+      category: (data[i][2] || '').toLowerCase(),
+      priority: (data[i][3] || 'none').toLowerCase(),
+      deps: (data[i][10] || '').toString(),  // column K
+      summary: data[i][6],
+      timestamp: data[i][0]
+    };
+    // Exclude blocked items from the actionable surface entirely
+    const blocked = item.deps.indexOf('BLOCKED:') === 0;
+    const isActionable = !blocked && (item.priority === 'high' || item.priority === 'medium' || item.category === 'action');
+    (isActionable ? actionable : inbox).push(item);
   }
 
-  if (pending.length === 0) {
+  if (actionable.length === 0 && inbox.length === 0) {
     Logger.log('No pending items — skipping digest.');
     return;
   }
 
-  // Build digest with Gemini
+  // Build digest with Gemini — from ACTIONABLE only
   const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-  const prompt = `Du är en personlig assistent. Sammanfatta dessa obearbetade brain dump-items till en kort, prioriterad morgonbriefing på svenska. Gruppera efter prioritet (brådskande först). Var koncis men handlingsinriktad.
+  const pending = actionable; // keep downstream counts referencing the actionable surface
+  const prompt = `Du är en personlig assistent. Sammanfatta dessa AKTIONERBARA brain dump-items till en kort, prioriterad morgonbriefing på svenska. Gruppera efter prioritet (brådskande först). Rekommendera max 3 MITs (viktigaste tasks idag). Var koncis och handlingsinriktad.
 
 Items:
-${pending.map((p, i) => `${i+1}. [${p.priority}] [${p.category}] ${p.summary || p.text}`).join('\n')}
+${actionable.map((p, i) => `${i+1}. [${p.priority}] [${p.category}] ${p.summary || p.text}`).join('\n')}
 
-Svara i ren text, inga markdown-headers. Max 300 ord.`;
+Svara i ren text, inga markdown-headers. Max 250 ord.`;
 
   let digestText = '';
   try {
@@ -380,18 +450,17 @@ Svara i ren text, inga markdown-headers. Max 300 ord.`;
     digestText = 'Kunde inte generera AI-sammanfattning. Fel: ' + err.toString();
   }
 
-  // Count by priority
-  const highCount = pending.filter(p => p.priority === 'high').length;
-  const medCount = pending.filter(p => p.priority === 'medium').length;
-  const lowCount = pending.filter(p => p.priority === 'low').length;
+  // Count by priority (within the actionable surface)
+  const highCount = actionable.filter(p => p.priority === 'high').length;
+  const medCount = actionable.filter(p => p.priority === 'medium').length;
 
-  // Build email
-  const subject = `🧠 Brain Dump: ${pending.length} obearbetade items (${highCount} brådskande)`;
+  // Build email — actionable up top, inbox collapsed to a count
+  const subject = `🧠 Brain Dump: ${actionable.length} aktionerbara (${highCount} brådskande) · ${inbox.length} i inbox`;
   const sheetUrl = SpreadsheetApp.getActiveSpreadsheet().getUrl();
 
   const body = `God morgon! 🌅\n\n` +
-    `Du har ${pending.length} obearbetade items:\n` +
-    `🔴 ${highCount} hög prioritet | 🟡 ${medCount} medium | 🟢 ${lowCount} låg/ingen\n\n` +
+    `🎯 ${actionable.length} aktionerbara: 🔴 ${highCount} hög | 🟡 ${medCount} medium\n` +
+    `📥 ${inbox.length} i inbox (låg/ingen prio + notes) — processa i weekly review\n\n` +
     `--- AI Briefing ---\n\n${digestText}\n\n` +
     `--- Öppna Sheet ---\n${sheetUrl}\n\n` +
     `Ha en produktiv dag! 💪`;
@@ -425,6 +494,67 @@ function ensureDailyTrigger() {
     }
   } catch(e) {
     Logger.log('Trigger setup skipped: ' + e.message);
+  }
+}
+
+// ---- Archive: move done rows (J=TRUE) out of Sheet1 into Archive tab ----
+// Keeps Sheet1 = active work only. Runs daily at 05:00 (before the 06:00 digest).
+function archiveDoneRows() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName('Sheet1') || ss.getSheets()[0];
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return;
+
+  var header = data[0];
+
+  // Ensure Archive tab exists with header
+  var archive = ss.getSheetByName('Archive');
+  if (!archive) {
+    archive = ss.insertSheet('Archive');
+    archive.appendRow(header.concat(['ArchivedFrom']));
+    archive.getRange(1, 1, 1, header.length + 1)
+      .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#e8e8e8');
+  }
+
+  // Collect done rows (column J index 9 === true), bottom-up for safe deletion
+  var doneRows = [];   // [{rowNum, values}]
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][9] === true) {
+      doneRows.push({ rowNum: i + 1, values: data[i] });
+    }
+  }
+  if (doneRows.length === 0) {
+    Logger.log('archiveDoneRows: nothing to archive.');
+    return;
+  }
+
+  // Append to Archive (preserve original row ref)
+  var payload = doneRows.map(function (d) {
+    return d.values.concat(['Sheet1!row' + d.rowNum]);
+  });
+  archive.getRange(archive.getLastRow() + 1, 1, payload.length, payload[0].length)
+    .setValues(payload);
+
+  // Delete from Sheet1, descending so indices stay valid
+  doneRows.sort(function (a, b) { return b.rowNum - a.rowNum; });
+  doneRows.forEach(function (d) { sheet.deleteRow(d.rowNum); });
+
+  Logger.log('archiveDoneRows: moved ' + doneRows.length + ' rows to Archive.');
+}
+
+// ---- Auto-ensure daily archive trigger (called from doPost) ----
+function ensureArchiveTrigger() {
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var has = triggers.some(function (t) { return t.getHandlerFunction() === 'archiveDoneRows'; });
+    if (!has) {
+      ScriptApp.newTrigger('archiveDoneRows')
+        .timeBased().atHour(5).everyDays(1)
+        .inTimezone('Europe/Stockholm').create();
+      Logger.log('✅ Daily archive trigger auto-created for 05:00 CET.');
+    }
+  } catch (e) {
+    Logger.log('Archive trigger setup skipped: ' + e.message);
   }
 }
 
